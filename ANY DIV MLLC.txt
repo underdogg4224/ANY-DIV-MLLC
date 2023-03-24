@@ -990,32 +990,3 @@ alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Div
 alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
 
 // End ANY-DIV V5
-
-bars_back = input.int(2, title="Bars Back for Divergence Filter", minval=1)
-
-
-// Check for bullish and bearish divergences within the specified number of bars back
-bullish_div = false
-bearish_div = false
-if barstate.islast
-    for i = 0 to min(bars_back, array.size(bullish_div)) - 1
-        line_start = line.get_xy1(array.get(bullish_div, array.size(bullish_div) - i - 1))
-        line_end = line.get_xy2(array.get(bullish_div, array.size(bullish_div) - i - 1))
-        if line_start[1] > line_end[1]
-            bullish_div := true
-            break
-
-    for i = 0 to min(bars_back, array.size(bearish_div)) - 1
-        line_start = line.get_xy1(array.get(bearish_div, array.size(bearish_div) - i - 1))
-        line_end = line.get_xy2(array.get(bearish_div, array.size(bearish_div) - i - 1))
-        if line_start[1] > line_end[1]
-            bearish_div := true
-            break
-
-// Generate buy and sell signals
-buy_signal = cross(predictions[1], predictions[0]) and bullish_div
-sell_signal = cross(predictions[0], predictions[1]) and bearish_div
-
-// Plot shapes with conditions
-plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
-plotshape(sell_signal and high[1] < high[2], style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
