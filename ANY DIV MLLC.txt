@@ -644,7 +644,7 @@ var hid_div_l_style = hid_div_l_style_ == 'Solid' ? line.style_solid : hid_div_l
 
 // get indicators
 rsi = ta.rsi(close, 14)  // RSI
-[macd, signal, deltamacd] = ta.macd(close, 12, 26, 9)  // MACD
+[macd, signal_ANYDIV, deltamacd] = ta.macd(close, 12, 26, 9)  // MACD
 moment = ta.mom(close, 10)  // Momentum
 cci = ta.cci(close, 10)  // CCI
 Obv = ta.obv  // OBV
@@ -719,7 +719,7 @@ positive_regular_positive_hidden_divergence(src, cond) =>
     if dontconfirm or src > src[1] or close > close[1]
         startpoint = dontconfirm ? 0 : 1  // don't check last candle
         // we search last 15 PPs
-        for x = 0 to maxpp - 1 by 1
+        for i = 0 to maxpp - 1 by 1
             len = bar_index - array.get(pl_positions, x) + prd
             // if we reach non valued array element or arrived 101. or previous bars then we don't search more
             if array.get(pl_positions, x) == 0 or len > maxbars
@@ -752,7 +752,7 @@ negative_regular_negative_hidden_divergence(src, cond) =>
     if dontconfirm or src < src[1] or close < close[1]
         startpoint = dontconfirm ? 0 : 1  // don't check last candle
         // we search last 15 PPs
-        for x = 0 to maxpp - 1 by 1
+        for i = 0 to maxpp - 1 by 1
             len = bar_index - array.get(ph_positions, x) + prd
             // if we reach non valued array element or arrived 101. or previous bars then we don't search more
             if array.get(ph_positions, x) == 0 or len > maxbars
@@ -789,7 +789,7 @@ calculate_divs(cond, indicator_1) =>
 var all_divergences = array.new_int(44)  // 11 indicators * 4 divergence = 44 elements
 // set related array elements
 array_set_divs(div_pointer, index) =>
-    for x = 0 to 3 by 1
+    for i = 0 to 3 by 1
         array.set(all_divergences, index * 4 + x, array.get(div_pointer, x))
 
 // set divergences array 
@@ -807,7 +807,7 @@ array_set_divs(calculate_divs(calcext, externalindi), 10)
 
 // check minimum number of divergence, if less than showlimit then delete all divergence
 total_div = 0
-for x = 0 to array.size(all_divergences) - 1 by 1
+for i = 0 to array.size(all_divergences) - 1 by 1
     total_div += math.round(math.sign(array.get(all_divergences, x)))
     total_div
 
@@ -889,7 +889,7 @@ if ph
 // draw divergences lines and labels
 divergence_text_top = ''
 divergence_text_bottom = ''
-distances = array.new_int(0)
+distances_ANYDIV = array.new_int(0)
 dnumdiv_top = 0
 dnumdiv_bottom = 0
 top_label_col = color.white
@@ -898,7 +898,7 @@ old_pos_divs_can_be_removed = true
 old_neg_divs_can_be_removed = true
 startpoint = dontconfirm ? 0 : 1  // used for don't confirm option
 
-for x = 0 to 10 by 1
+for i = 0 to 10 by 1
     div_type = -1
     for y = 0 to 3 by 1
         if array.get(all_divergences, x * 4 + y) > 0  // any divergence?
@@ -1010,8 +1010,9 @@ for i = 0 to bearish_div_lookback - 1
         break
 
 // Combined buy and sell signals
-buy_signal = t2 > t1 and bullish_div
-sell_signal = t2 < t1 and bearish_div
+buy_signal = predictions[2] > predictions[1] and bullish_div
+sell_signal = predictions[2] < predictions[1] and bearish_div
+
 
 
 plotshape(buy_signal, style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
