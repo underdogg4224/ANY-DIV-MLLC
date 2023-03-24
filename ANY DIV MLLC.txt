@@ -993,13 +993,11 @@ alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Div
 
 // Fix for shadowing variable 'x'
 x_MLLC = x
-x_ANYDIV = x
 
 // Define variable and array
 bullish_div_lookback = 14
 bearish_div_lookback = 14
 x_MLLC = input(title="Input Series", type=input.source, defval=close)
-x_ANYDIV = rsi(x_MLLC, 14)
 
 // Check for bullish divergence within the lookback period
 bullish_div = false
@@ -1011,14 +1009,13 @@ for i = 0 to bullish_div_lookback - 1
 // Check for bearish divergence within the lookback period
 bearish_div = false
 for i = 0 to bearish_div_lookback - 1
-    if na(x_ANYDIV[i]) == false
+    if na(x_MLLC[i]) == false
         bearish_div := true
         break
 
 // Buy and sell signals
-bar_index = bar_index - 1
-buy_signal = predictions[1][bar_index] > predictions[0][bar_index+1] and bullish_div
-sell_signal = predictions[0][bar_index] > predictions[1][bar_index+1] and bearish_div
+buy_signal = barstate.isrealtime and predictions[1] > predictions[0] and bullish_div
+sell_signal = barstate.isrealtime and predictions[0] > predictions[1] and bearish_div
 
 // Plot shapes with conditions
 plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
