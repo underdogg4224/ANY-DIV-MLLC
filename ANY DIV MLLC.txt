@@ -990,6 +990,8 @@ alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Div
 alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
 
 // End ANY-DIV V5
+bullish_div = line.new(na, na, na, na, width = 2, color = color.green)
+bearish_div = line.new(na, na, na, na, width = 2, color = color.red)
 
 bullish_div_bar_indexes = array.new_int(0)
 bearish_div_bar_indexes = array.new_int(0)
@@ -999,13 +1001,14 @@ bars_back = input.int(2, title="Bars Back for Divergence Filter", minval=1)
 // Check for bullish and bearish divergences within the specified number of bars back
 bullish_div_found = false
 bearish_div_found = false
+
 for i = 0 to bars_back - 1
-    if na(bullish_div[i]) == false
+    if na(line.get_xy1(bullish_div)[1][i]) == false
         bullish_div_found := true
         break
 
 for i = 0 to bars_back - 1
-    if na(bearish_div[i]) == false
+    if na(line.get_xy1(bearish_div)[1][i]) == false
         bearish_div_found := true
         break
 
