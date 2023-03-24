@@ -9,6 +9,7 @@ mult = input.float(3.0, title="Multiplier")
 bullish_div_lookback = input.int(5, title="Bullish Divergence Lookback", minval=1)
 bearish_div_lookback = input.int(5, title="Bearish Divergence Lookback", minval=1)
 
+// Start MLLC
 import jdehorty/MLExtensions/2 as ml
 import jdehorty/KernelFunctions/2 as kernels
 
@@ -338,7 +339,262 @@ showBarPredictions = input.bool(defval = true, title = "Show Bar Prediction Valu
 useAtrOffset = input.bool(defval = false, title = "Use ATR Offset", tooltip = "Will use the ATR offset instead of the bar prediction offset.", group="Display Settings")
 barPredictionsOffset = input.float(0, "Bar Prediction Offset", minval=0, tooltip="The offset of the bar predictions as a percentage from the bar high or close.", group="Display Settings")
 
-//ANY DIV
+// =================================
+// ==== Next Bar Classification ====
+// =================================
+
+// This model specializes specifically in predicting the direction of price action over the course of the next 4 bars. 
+// To avoid complications with the ML model, this value is hardcoded to 4 bars but support for other training lengths may be added in the future.
+src = settings.source
+y_train_series = src[4] < src[0] ? direction.short : src[4] > src[0] ? direction.long : direction.neutral
+var y_train_array = array.new_int(0)
+
+// Variables used for ML Logic
+var predictions = array.new_float(0)
+var prediction = 0.
+var signal = direction.neutral
+var distances = array.new_float(0)
+
+array.push(y_train_array, y_train_series)
+
+// =========================
+// ====  Core ML Logic  ====
+// =========================
+
+// Approximate Nearest Neighbors Search with Lorentzian Distance:
+// A novel variation of the Nearest Neighbors (NN) search algorithm that ensures a chronologically uniform distribution of neighbors.
+
+// In a traditional KNN-based approach, we would iterate through the entire dataset and calculate the distance between the current bar 
+// and every other bar in the dataset and then sort the distances in ascending order. We would then take the first k bars and use their 
+// labels to determine the label of the current bar. 
+
+// There are several problems with this traditional KNN approach in the context of real-time calculations involving time series data:
+// - It is computationally expensive to iterate through the entire dataset and calculate the distance between every historical bar and
+//   the current bar.
+// - Market time series data is often non-stationary, meaning that the statistical properties of the data change slightly over time.
+// - It is possible that the nearest neighbors are not the most informative ones, and the KNN algorithm may return poor results if the
+//   nearest neighbors are not representative of the majority of the data.
+
+// Previously, the user @capissimo attempted to address some of these issues in several of his PineScript-based KNN implementations by:
+// - Using a modified KNN algorithm based on consecutive furthest neighbors to find a set of approximate "nearest" neighbors.
+// - Using a sliding window approach to only calculate the distance between the current bar and the most recent n bars in the dataset.
+
+// Of these two approaches, the latter is inherently limited by the fact that it only considers the most recent bars in the overall dataset. 
+
+// The former approach has more potential to leverage historical price action, but is limited by:
+// - The possibility of a sudden "max" value throwing off the estimation
+// - The possibility of selecting a set of approximate neighbors that are not representative of the majority of the data by oversampling 
+//   values that are not chronologically distinct enough from one another
+// - The possibility of selecting too many "far" neighbors, which may result in a poor estimation of price action
+
+// To address these issues, a novel Approximate Nearest Neighbors (ANN) algorithm is used in this indicator.
+
+// In the below ANN algorithm:
+// 1. The algorithm iterates through the dataset in chronological order, using the modulo operator to only perform calculations every 4 bars.
+//    This serves the dual purpose of reducing the computational overhead of the algorithm and ensuring a minimum chronological spacing 
+//    between the neighbors of at least 4 bars.
+// 2. A list of the k-similar neighbors is simultaneously maintained in both a predictions array and corresponding distances array.
+// 3. When the size of the predictions array exceeds the desired number of nearest neighbors specified in settings.neighborsCount, 
+//    the algorithm removes the first neighbor from the predictions array and the corresponding distance array.
+// 4. The lastDistance variable is overriden to be a distance in the lower 25% of the array. This step helps to boost overall accuracy 
+//    by ensuring subsequent newly added distance values increase at a slower rate.
+// 5. Lorentzian distance is used as a distance metric in order to minimize the effect of outliers and take into account the warping of 
+//    "price-time" due to proximity to significant economic events.
+
+lastDistance = -1.0
+size = math.min(settings.maxBarsBack-1, array.size(y_train_array)-1)
+sizeLoop = math.min(settings.maxBarsBack-1, size)
+
+if bar_index >= maxBarsBackIndex //{
+    for i = 0 to sizeLoop //{
+        d = get_lorentzian_distance(i, settings.featureCount, featureSeries, featureArrays) 
+        if d >= lastDistance and i%4 //{
+            lastDistance := d            
+            array.push(distances, d)
+            array.push(predictions, math.round(array.get(y_train_array, i)))
+            if array.size(predictions) > settings.neighborsCount //{
+                lastDistance := array.get(distances, math.round(settings.neighborsCount*3/4))
+                array.shift(distances)
+                array.shift(predictions)
+            //}
+        //}
+    //}
+    prediction := array.sum(predictions)
+//}
+
+// ============================
+// ==== Prediction Filters ====
+// ============================
+
+// User Defined Filters: Used for adjusting the frequency of the ML Model's predictions
+filter_all = filter.volatility and filter.regime and filter.adx
+
+// Filtered Signal: The model's prediction of future price movement direction with user-defined filters applied
+signal := prediction > 0 and filter_all ? direction.long : prediction < 0 and filter_all ? direction.short : nz(signal[1])
+
+// Bar-Count Filters: Represents strict filters based on a pre-defined holding period of 4 bars
+var int barsHeld = 0
+barsHeld := ta.change(signal) ? 0 : barsHeld + 1
+isHeldFourBars = barsHeld == 4
+isHeldLessThanFourBars = 0 < barsHeld and barsHeld < 4
+
+// Fractal Filters
+isDifferentSignalType = ta.change(signal)
+isEarlySignalFlip = ta.change(signal) and (ta.change(signal[1]) or ta.change(signal[2]) or ta.change(signal[3]))
+
+isBuySignal = signal == direction.long and isFilter1Uptrend and isFilter2Uptrend
+isSellSignal = signal == direction.short and isFilter1Downtrend and isFilter2Downtrend
+isLastSignalBuy = signal[4] == direction.long and isFilter1Uptrend[4] and isFilter2Uptrend[4]
+isLastSignalSell = signal[4] == direction.short and isFilter1Downtrend[4] and isFilter2Downtrend[4]
+isNewBuySignal = isBuySignal and isDifferentSignalType
+isNewSellSignal = isSellSignal and isDifferentSignalType
+
+
+// Kernel Regression Filters: Filters based on Nadaraya-Watson Kernel Regression using the Rational Quadratic Kernel
+// For more information on this technique refer to my other open source indicator located here: 
+// https://www.tradingview.com/script/AWNvbPRM-Nadaraya-Watson-Rational-Quadratic-Kernel-Non-Repainting/
+c_green = color.new(#009988, 20)
+c_red = color.new(#CC3311, 20)
+transparent = color.new(#000000, 100)
+yhat1 = kernels.rationalQuadratic(settings.source, h, r, x)
+yhat2 = kernels.gaussian(settings.source, h-lag, x)
+kernelEstimate = yhat1
+// Kernel Rates of Change
+bool wasBearishRate = yhat1[2] > yhat1[1]
+bool wasBullishRate = yhat1[2] < yhat1[1]
+bool isBearishRate = yhat1[1] > yhat1
+bool isBullishRate = yhat1[1] < yhat1
+isBearishChange = isBearishRate and wasBullishRate
+isBullishChange = isBullishRate and wasBearishRate
+// Kernel Crossovers
+bool isBullishCrossAlert = ta.crossover(yhat2, yhat1)
+bool isBearishCrossAlert = ta.crossunder(yhat2, yhat1) 
+bool isBullishSmooth = yhat2 >= yhat1
+bool isBearishSmooth = yhat2 <= yhat1
+// Kernel Colors
+color colorByCross = isBullishSmooth ? c_green : c_red
+color colorByRate = isBullishRate ? c_green : c_red
+color plotColor = showKernelEstimate ? (useKernelSmoothing ? colorByCross : colorByRate) : transparent
+plot(kernelEstimate, color=plotColor, linewidth=2, title="Kernel Regression Estimate")
+// Alert Variables
+bool alertBullish = useKernelSmoothing ? isBullishCrossAlert : isBullishChange
+bool alertBearish = useKernelSmoothing ? isBearishCrossAlert : isBearishChange
+// Bullish and Bearish Filters based on Kernel
+isBullish = useKernelFilter ? (useKernelSmoothing ? isBullishSmooth : isBullishRate) : true
+isBearish = useKernelFilter ? (useKernelSmoothing ? isBearishSmooth : isBearishRate) : true
+
+// ===========================
+// ==== Entries and Exits ====
+// ===========================
+
+// Entry Conditions
+startLongTrade = isNewBuySignal and isBullish and isFilter1Uptrend and isFilter2Uptrend
+startShortTrade = isNewSellSignal and isBearish and isFilter1Downtrend and isFilter2Downtrend
+
+// Dynamic Exit Conditions: Booleans for ML Model Position Exits based on Fractal Filters and Kernel Regression Filters
+lastSignalWasBullish = ta.barssince(startLongTrade) < ta.barssince(startShortTrade)
+lastSignalWasBearish = ta.barssince(startShortTrade) < ta.barssince(startLongTrade)
+barsSinceRedEntry = ta.barssince(startShortTrade)
+barsSinceRedExit = ta.barssince(alertBullish)
+barsSinceGreenEntry = ta.barssince(startLongTrade)
+barsSinceGreenExit = ta.barssince(alertBearish)
+isValidShortExit = barsSinceRedExit > barsSinceRedEntry
+isValidLongExit = barsSinceGreenExit > barsSinceGreenEntry
+endLongTradeDynamic = (isBearishChange and isValidLongExit[1])
+endShortTradeDynamic = (isBullishChange and isValidShortExit[1])
+
+// Fixed Exit Conditions
+endLongTradeStrict = ((isHeldFourBars and isLastSignalBuy) or (isHeldLessThanFourBars and isNewSellSignal and isLastSignalBuy)) and startLongTrade[4]
+endShortTradeStrict = (isHeldFourBars and isLastSignalSell) or (isHeldLessThanFourBars and isNewBuySignal and isLastSignalSell) and startShortTrade[4]
+
+isDynamicExitValid = not useMovingAverage and not useKernelSmoothing
+
+endLongTrade = settings.useDynamicExits and isDynamicExitValid ? endLongTradeDynamic : endLongTradeStrict 
+endShortTrade = settings.useDynamicExits and isDynamicExitValid ? endShortTradeDynamic : endShortTradeStrict
+
+
+
+// =========================
+// ==== Plotting Labels ====
+// =========================
+
+// Note: These will not repaint once the most recent bar has fully closed. By default, signals appear over the last closed bar; to override this behavior set offset=0.
+plotshape(startLongTrade ? low : na, 'Buy', shape.labelup, location.belowbar, color=ml.color_green(prediction), size=size.small, offset=0)
+plotshape(startShortTrade ? high : na, 'Sell', shape.labeldown, location.abovebar, ml.color_red(-prediction), size=size.small, offset=0)
+plotshape(endLongTrade and settings.showExits ? high : na, 'StopBuy', shape.xcross, location.absolute, color=#3AFF17, size=size.tiny, offset=0)
+plotshape(endShortTrade and settings.showExits ? low : na, 'StopSell', shape.xcross, location.absolute, color=#FD1707, size=size.tiny, offset=0)
+
+// ================
+// ==== Alerts ====
+// ================ 
+
+// Separate Alerts for Entries and Exits
+alertcondition(startLongTrade, title='Open Long ▲', message='LDC Open Long ▲ | {{ticker}}@{{close}} | ({{interval}})')
+alertcondition(endLongTrade, title='Close Long ▲', message='LDC Close Long ▲ | {{ticker}}@{{close}} | ({{interval}})')
+alertcondition(startShortTrade, title='Open Short ▼', message='LDC Open Short  | {{ticker}}@{{close}} | ({{interval}})')
+alertcondition(endShortTrade, title='Close Short ▼', message='LDC Close Short ▼ | {{ticker}}@{{close}} | ({{interval}})')
+
+// Combined Alerts for Entries and Exits
+alertcondition(startShortTrade or startLongTrade, title='Open Position ▲▼', message='LDC Open Position ▲▼ | {{ticker}}@{{close}} | ({{interval}})')
+alertcondition(endShortTrade or endLongTrade, title='Close Position ▲▼', message='LDC Close Position  ▲▼ | {{ticker}}@[{{close}}] | ({{interval}})')
+
+// Kernel Estimate Alerts
+alertcondition(condition=alertBullish, title='Kernel Bullish Color Change', message='LDC Kernel Bullish ▲ | {{ticker}}@{{close}} | ({{interval}})')
+alertcondition(condition=alertBearish, title='Kernel Bearish Color Change', message='LDC Kernel Bearish ▼ | {{ticker}}@{{close}} | ({{interval}})')
+
+// =========================
+// ==== Display Signals ==== 
+// =========================
+
+atrSpaced = useAtrOffset ? ta.atr(1) : na
+compressionFactor = settings.neighborsCount / settings.colorCompression
+c_pred = prediction > 0 ? color.from_gradient(prediction, 0, compressionFactor, #787b86, #009988) : prediction <= 0 ? color.from_gradient(prediction, -compressionFactor, 0, #CC3311, #787b86) : na
+c_label = showBarPredictions ? c_pred : na
+c_bars = showBarColors ? color.new(c_pred, 50) : na
+x_val = bar_index
+y_val = useAtrOffset ? prediction > 0 ? high + atrSpaced: low - atrSpaced : prediction > 0 ? high + hl2*barPredictionsOffset/20 : low - hl2*barPredictionsOffset/30
+label.new(x_val, y_val, str.tostring(prediction), xloc.bar_index, yloc.price, color.new(color.white, 100), label.style_label_up, c_label, size.normal, text.align_left)
+barcolor(showBarColors ? color.new(c_pred, 50) : na)
+
+// ===================== 
+// ==== Backtesting ====
+// =====================
+
+// The following can be used to stream signals to a backtest adapter
+backTestStream = switch 
+    startLongTrade => 1
+    endLongTrade => 2
+    startShortTrade => -1
+    endShortTrade => -2
+plot(backTestStream, "Backtest Stream", display=display.none)
+
+// The following can be used to display real-time trade stats. This can be a useful mechanism for obtaining real-time feedback during Feature Engineering. This does NOT replace the need to properly backtest.
+// Note: In this context, a "Stop-Loss" is defined instances where the ML Signal prematurely flips directions before an exit signal can be generated.
+[totalWins, totalLosses, totalEarlySignalFlips, totalTrades, tradeStatsHeader, winLossRatio, winRate] = ml.backtest(high, low, open, startLongTrade, endLongTrade, startShortTrade, endShortTrade, isEarlySignalFlip, maxBarsBackIndex, bar_index, settings.source, useWorstCase)
+
+init_table() =>
+    c_transparent = color.new(color.black, 100)
+    table.new(position.top_right, columns=2, rows=7, frame_color=color.new(color.black, 100), frame_width=1, border_width=1, border_color=c_transparent)
+
+update_table(tbl, tradeStatsHeader, totalTrades, totalWins, totalLosses, winLossRatio, winRate, stopLosses) => 
+    c_transparent = color.new(color.black, 100)
+    table.cell(tbl, 0, 0, tradeStatsHeader, text_halign=text.align_center, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 0, 1, 'Winrate', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 1, 1, str.tostring(totalWins / totalTrades, '#.#%'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 0, 2, 'Trades', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 1, 2, str.tostring(totalTrades, '#') + ' (' + str.tostring(totalWins, '#') + '|' + str.tostring(totalLosses, '#') + ')', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 0, 5, 'WL Ratio', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 1, 5, str.tostring(totalWins / totalLosses, '0.00'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 0, 6, 'Early Signal Flips', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+    table.cell(tbl, 1, 6, str.tostring(totalEarlySignalFlips, '#'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
+
+if showTradeStats
+    var tbl = ml.init_table()
+    if barstate.islast
+        update_table(tbl, tradeStatsHeader, totalTrades, totalWins, totalLosses, winLossRatio, winRate, totalEarlySignalFlips)
+// End MLLC
+
+// Start ANY-DIV V5
 indicator('My Divergence for Many Indicators v5', overlay=true, max_bars_back=1000, max_lines_count=400, max_labels_count=400)
 prd = input.int(defval=5, title='Pivot Period', minval=1, maxval=50)
 source = input.string(defval='Close', title='Source for Pivot Points', options=['Close', 'High/Low'])
@@ -404,25 +660,6 @@ Mfi = ta.mfi(close, 14)  // Moneyt Flow Index
 // keep indicators names and colors in arrays
 var indicators_name = array.new_string(11)
 var div_colors = array.new_color(4)
-
-// Check for bullish divergence within the lookback period
-bullish_div = false
-for i = 0 to bullish_div_lookback - 1
-    if na(bullishdiv[i]) == false
-        bullish_div := true
-        break
-
-// Check for bearish divergence within the lookback period
-bearish_div = false
-for i = 0 to bearish_div_lookback - 1
-    if na(bearishdiv[i]) == false
-        bearish_div := true
-        break
-
-// Combined buy and sell signals
-buy_signal = t2 > t1 and bullish_div
-sell_signal = t2 < t1 and bearish_div
-
 if barstate.isfirst
     // names
     array.set(indicators_name, 0, showindis == 'Full' ? 'MACD' : 'M')
@@ -752,260 +989,53 @@ alertcondition(neg_hid_div_detected, title='Negative Hidden Divergence Detected'
 alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Divergence Detected', message='Positive Divergence Detected')
 alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
 
-// =================================
-// ==== Next Bar Classification ====
-// =================================
+// End ANY-DIV V5
 
-// This model specializes specifically in predicting the direction of price action over the course of the next 4 bars. 
-// To avoid complications with the ML model, this value is hardcoded to 4 bars but support for other training lengths may be added in the future.
-src = settings.source
-y_train_series = src[4] < src[0] ? direction.short : src[4] > src[0] ? direction.long : direction.neutral
-var y_train_array = array.new_int(0)
+// Fix for shadowing variable 'x'
+x_MLLC = x
+x_ANYDIV = x
 
-// Variables used for ML Logic
-var predictions = array.new_float(0)
-var prediction = 0.
-var signal = direction.neutral
-var distances = array.new_float(0)
+// Check for bullish divergence within the lookback period
+bullish_div = false
+for i = 0 to bullish_div_lookback - 1
+    if na(x_MLLC[i]) == false
+        bullish_div := true
+        break
 
-array.push(y_train_array, y_train_series)
+// Check for bearish divergence within the lookback period
+bearish_div = false
+for i = 0 to bearish_div_lookback - 1
+    if na(x_ANYDIV[i]) == false
+        bearish_div := true
+        break
 
-// =========================
-// ====  Core ML Logic  ====
-// =========================
+// Combined buy and sell signals
+buy_signal = t2_MLLC > t1_MLLC and bullish_div
+sell_signal = t2_MLLC < t1_MLLC and bearish_div
 
-// Approximate Nearest Neighbors Search with Lorentzian Distance:
-// A novel variation of the Nearest Neighbors (NN) search algorithm that ensures a chronologically uniform distribution of neighbors.
+// Fix for shadowing variable 'x'
+x_MLLC = x
+x_ANYDIV = x
 
-// In a traditional KNN-based approach, we would iterate through the entire dataset and calculate the distance between the current bar 
-// and every other bar in the dataset and then sort the distances in ascending order. We would then take the first k bars and use their 
-// labels to determine the label of the current bar. 
+// Check for bullish divergence within the lookback period
+bullish_div = false
+for i = 0 to bullish_div_lookback - 1
+    if na(x_MLLC[i]) == false
+        bullish_div := true
+        break
 
-// There are several problems with this traditional KNN approach in the context of real-time calculations involving time series data:
-// - It is computationally expensive to iterate through the entire dataset and calculate the distance between every historical bar and
-//   the current bar.
-// - Market time series data is often non-stationary, meaning that the statistical properties of the data change slightly over time.
-// - It is possible that the nearest neighbors are not the most informative ones, and the KNN algorithm may return poor results if the
-//   nearest neighbors are not representative of the majority of the data.
+// Check for bearish divergence within the lookback period
+bearish_div = false
+for i = 0 to bearish_div_lookback - 1
+    if na(x_ANYDIV[i]) == false
+        bearish_div := true
+        break
 
-// Previously, the user @capissimo attempted to address some of these issues in several of his PineScript-based KNN implementations by:
-// - Using a modified KNN algorithm based on consecutive furthest neighbors to find a set of approximate "nearest" neighbors.
-// - Using a sliding window approach to only calculate the distance between the current bar and the most recent n bars in the dataset.
+// Combined buy and sell signals
+buy_signal = t2_MLLC > t1_MLLC and bullish_div
+sell_signal = t2_MLLC < t1_MLLC and bearish_div
 
-// Of these two approaches, the latter is inherently limited by the fact that it only considers the most recent bars in the overall dataset. 
-
-// The former approach has more potential to leverage historical price action, but is limited by:
-// - The possibility of a sudden "max" value throwing off the estimation
-// - The possibility of selecting a set of approximate neighbors that are not representative of the majority of the data by oversampling 
-//   values that are not chronologically distinct enough from one another
-// - The possibility of selecting too many "far" neighbors, which may result in a poor estimation of price action
-
-// To address these issues, a novel Approximate Nearest Neighbors (ANN) algorithm is used in this indicator.
-
-// In the below ANN algorithm:
-// 1. The algorithm iterates through the dataset in chronological order, using the modulo operator to only perform calculations every 4 bars.
-//    This serves the dual purpose of reducing the computational overhead of the algorithm and ensuring a minimum chronological spacing 
-//    between the neighbors of at least 4 bars.
-// 2. A list of the k-similar neighbors is simultaneously maintained in both a predictions array and corresponding distances array.
-// 3. When the size of the predictions array exceeds the desired number of nearest neighbors specified in settings.neighborsCount, 
-//    the algorithm removes the first neighbor from the predictions array and the corresponding distance array.
-// 4. The lastDistance variable is overriden to be a distance in the lower 25% of the array. This step helps to boost overall accuracy 
-//    by ensuring subsequent newly added distance values increase at a slower rate.
-// 5. Lorentzian distance is used as a distance metric in order to minimize the effect of outliers and take into account the warping of 
-//    "price-time" due to proximity to significant economic events.
-
-lastDistance = -1.0
-size = math.min(settings.maxBarsBack-1, array.size(y_train_array)-1)
-sizeLoop = math.min(settings.maxBarsBack-1, size)
-
-if bar_index >= maxBarsBackIndex //{
-    for i = 0 to sizeLoop //{
-        d = get_lorentzian_distance(i, settings.featureCount, featureSeries, featureArrays) 
-        if d >= lastDistance and i%4 //{
-            lastDistance := d            
-            array.push(distances, d)
-            array.push(predictions, math.round(array.get(y_train_array, i)))
-            if array.size(predictions) > settings.neighborsCount //{
-                lastDistance := array.get(distances, math.round(settings.neighborsCount*3/4))
-                array.shift(distances)
-                array.shift(predictions)
-            //}
-        //}
-    //}
-    prediction := array.sum(predictions)
-//}
-
-// ============================
-// ==== Prediction Filters ====
-// ============================
-
-// User Defined Filters: Used for adjusting the frequency of the ML Model's predictions
-filter_all = filter.volatility and filter.regime and filter.adx
-
-// Filtered Signal: The model's prediction of future price movement direction with user-defined filters applied
-signal := prediction > 0 and filter_all ? direction.long : prediction < 0 and filter_all ? direction.short : nz(signal[1])
-
-// Bar-Count Filters: Represents strict filters based on a pre-defined holding period of 4 bars
-var int barsHeld = 0
-barsHeld := ta.change(signal) ? 0 : barsHeld + 1
-isHeldFourBars = barsHeld == 4
-isHeldLessThanFourBars = 0 < barsHeld and barsHeld < 4
-
-// Fractal Filters
-isDifferentSignalType = ta.change(signal)
-isEarlySignalFlip = ta.change(signal) and (ta.change(signal[1]) or ta.change(signal[2]) or ta.change(signal[3]))
-
-isBuySignal = signal == direction.long and isFilter1Uptrend and isFilter2Uptrend
-isSellSignal = signal == direction.short and isFilter1Downtrend and isFilter2Downtrend
-isLastSignalBuy = signal[4] == direction.long and isFilter1Uptrend[4] and isFilter2Uptrend[4]
-isLastSignalSell = signal[4] == direction.short and isFilter1Downtrend[4] and isFilter2Downtrend[4]
-isNewBuySignal = isBuySignal and isDifferentSignalType
-isNewSellSignal = isSellSignal and isDifferentSignalType
-
-
-// Kernel Regression Filters: Filters based on Nadaraya-Watson Kernel Regression using the Rational Quadratic Kernel
-// For more information on this technique refer to my other open source indicator located here: 
-// https://www.tradingview.com/script/AWNvbPRM-Nadaraya-Watson-Rational-Quadratic-Kernel-Non-Repainting/
-c_green = color.new(#009988, 20)
-c_red = color.new(#CC3311, 20)
-transparent = color.new(#000000, 100)
-yhat1 = kernels.rationalQuadratic(settings.source, h, r, x)
-yhat2 = kernels.gaussian(settings.source, h-lag, x)
-kernelEstimate = yhat1
-// Kernel Rates of Change
-bool wasBearishRate = yhat1[2] > yhat1[1]
-bool wasBullishRate = yhat1[2] < yhat1[1]
-bool isBearishRate = yhat1[1] > yhat1
-bool isBullishRate = yhat1[1] < yhat1
-isBearishChange = isBearishRate and wasBullishRate
-isBullishChange = isBullishRate and wasBearishRate
-// Kernel Crossovers
-bool isBullishCrossAlert = ta.crossover(yhat2, yhat1)
-bool isBearishCrossAlert = ta.crossunder(yhat2, yhat1) 
-bool isBullishSmooth = yhat2 >= yhat1
-bool isBearishSmooth = yhat2 <= yhat1
-// Kernel Colors
-color colorByCross = isBullishSmooth ? c_green : c_red
-color colorByRate = isBullishRate ? c_green : c_red
-color plotColor = showKernelEstimate ? (useKernelSmoothing ? colorByCross : colorByRate) : transparent
-plot(kernelEstimate, color=plotColor, linewidth=2, title="Kernel Regression Estimate")
-// Alert Variables
-bool alertBullish = useKernelSmoothing ? isBullishCrossAlert : isBullishChange
-bool alertBearish = useKernelSmoothing ? isBearishCrossAlert : isBearishChange
-// Bullish and Bearish Filters based on Kernel
-isBullish = useKernelFilter ? (useKernelSmoothing ? isBullishSmooth : isBullishRate) : true
-isBearish = useKernelFilter ? (useKernelSmoothing ? isBearishSmooth : isBearishRate) : true
-
-// ===========================
-// ==== Entries and Exits ====
-// ===========================
-
-// Entry Conditions
-startLongTrade = isNewBuySignal and isBullish and isFilter1Uptrend and isFilter2Uptrend
-startShortTrade = isNewSellSignal and isBearish and isFilter1Downtrend and isFilter2Downtrend
-
-// Dynamic Exit Conditions: Booleans for ML Model Position Exits based on Fractal Filters and Kernel Regression Filters
-lastSignalWasBullish = ta.barssince(startLongTrade) < ta.barssince(startShortTrade)
-lastSignalWasBearish = ta.barssince(startShortTrade) < ta.barssince(startLongTrade)
-barsSinceRedEntry = ta.barssince(startShortTrade)
-barsSinceRedExit = ta.barssince(alertBullish)
-barsSinceGreenEntry = ta.barssince(startLongTrade)
-barsSinceGreenExit = ta.barssince(alertBearish)
-isValidShortExit = barsSinceRedExit > barsSinceRedEntry
-isValidLongExit = barsSinceGreenExit > barsSinceGreenEntry
-endLongTradeDynamic = (isBearishChange and isValidLongExit[1])
-endShortTradeDynamic = (isBullishChange and isValidShortExit[1])
-
-// Fixed Exit Conditions
-endLongTradeStrict = ((isHeldFourBars and isLastSignalBuy) or (isHeldLessThanFourBars and isNewSellSignal and isLastSignalBuy)) and startLongTrade[4]
-endShortTradeStrict = (isHeldFourBars and isLastSignalSell) or (isHeldLessThanFourBars and isNewBuySignal and isLastSignalSell) and startShortTrade[4]
-
-isDynamicExitValid = not useMovingAverage and not useKernelSmoothing
-
-endLongTrade = settings.useDynamicExits and isDynamicExitValid ? endLongTradeDynamic : endLongTradeStrict 
-endShortTrade = settings.useDynamicExits and isDynamicExitValid ? endShortTradeDynamic : endShortTradeStrict
-
-
-
-// =========================
-// ==== Plotting Labels ====
-// =========================
-
-// Note: These will not repaint once the most recent bar has fully closed. By default, signals appear over the last closed bar; to override this behavior set offset=0.
-plotshape(startLongTrade ? low : na, 'Buy', shape.labelup, location.belowbar, color=ml.color_green(prediction), size=size.small, offset=0)
-plotshape(startShortTrade ? high : na, 'Sell', shape.labeldown, location.abovebar, ml.color_red(-prediction), size=size.small, offset=0)
-plotshape(endLongTrade and settings.showExits ? high : na, 'StopBuy', shape.xcross, location.absolute, color=#3AFF17, size=size.tiny, offset=0)
-plotshape(endShortTrade and settings.showExits ? low : na, 'StopSell', shape.xcross, location.absolute, color=#FD1707, size=size.tiny, offset=0)
 plotshape(buy_signal, style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal, style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
 
-
-// ================
-// ==== Alerts ====
-// ================ 
-
-// Separate Alerts for Entries and Exits
-alertcondition(startLongTrade, title='Open Long ▲', message='LDC Open Long ▲ | {{ticker}}@{{close}} | ({{interval}})')
-alertcondition(endLongTrade, title='Close Long ▲', message='LDC Close Long ▲ | {{ticker}}@{{close}} | ({{interval}})')
-alertcondition(startShortTrade, title='Open Short ▼', message='LDC Open Short  | {{ticker}}@{{close}} | ({{interval}})')
-alertcondition(endShortTrade, title='Close Short ▼', message='LDC Close Short ▼ | {{ticker}}@{{close}} | ({{interval}})')
-
-// Combined Alerts for Entries and Exits
-alertcondition(startShortTrade or startLongTrade, title='Open Position ▲▼', message='LDC Open Position ▲▼ | {{ticker}}@{{close}} | ({{interval}})')
-alertcondition(endShortTrade or endLongTrade, title='Close Position ▲▼', message='LDC Close Position  ▲▼ | {{ticker}}@[{{close}}] | ({{interval}})')
-
-// Kernel Estimate Alerts
-alertcondition(condition=alertBullish, title='Kernel Bullish Color Change', message='LDC Kernel Bullish ▲ | {{ticker}}@{{close}} | ({{interval}})')
-alertcondition(condition=alertBearish, title='Kernel Bearish Color Change', message='LDC Kernel Bearish ▼ | {{ticker}}@{{close}} | ({{interval}})')
-
-// =========================
-// ==== Display Signals ==== 
-// =========================
-
-atrSpaced = useAtrOffset ? ta.atr(1) : na
-compressionFactor = settings.neighborsCount / settings.colorCompression
-c_pred = prediction > 0 ? color.from_gradient(prediction, 0, compressionFactor, #787b86, #009988) : prediction <= 0 ? color.from_gradient(prediction, -compressionFactor, 0, #CC3311, #787b86) : na
-c_label = showBarPredictions ? c_pred : na
-c_bars = showBarColors ? color.new(c_pred, 50) : na
-x_val = bar_index
-y_val = useAtrOffset ? prediction > 0 ? high + atrSpaced: low - atrSpaced : prediction > 0 ? high + hl2*barPredictionsOffset/20 : low - hl2*barPredictionsOffset/30
-label.new(x_val, y_val, str.tostring(prediction), xloc.bar_index, yloc.price, color.new(color.white, 100), label.style_label_up, c_label, size.normal, text.align_left)
-barcolor(showBarColors ? color.new(c_pred, 50) : na)
-
-// ===================== 
-// ==== Backtesting ====
-// =====================
-
-// The following can be used to stream signals to a backtest adapter
-backTestStream = switch 
-    startLongTrade => 1
-    endLongTrade => 2
-    startShortTrade => -1
-    endShortTrade => -2
-plot(backTestStream, "Backtest Stream", display=display.none)
-
-// The following can be used to display real-time trade stats. This can be a useful mechanism for obtaining real-time feedback during Feature Engineering. This does NOT replace the need to properly backtest.
-// Note: In this context, a "Stop-Loss" is defined instances where the ML Signal prematurely flips directions before an exit signal can be generated.
-[totalWins, totalLosses, totalEarlySignalFlips, totalTrades, tradeStatsHeader, winLossRatio, winRate] = ml.backtest(high, low, open, startLongTrade, endLongTrade, startShortTrade, endShortTrade, isEarlySignalFlip, maxBarsBackIndex, bar_index, settings.source, useWorstCase)
-
-init_table() =>
-    c_transparent = color.new(color.black, 100)
-    table.new(position.top_right, columns=2, rows=7, frame_color=color.new(color.black, 100), frame_width=1, border_width=1, border_color=c_transparent)
-
-update_table(tbl, tradeStatsHeader, totalTrades, totalWins, totalLosses, winLossRatio, winRate, stopLosses) => 
-    c_transparent = color.new(color.black, 100)
-    table.cell(tbl, 0, 0, tradeStatsHeader, text_halign=text.align_center, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 0, 1, 'Winrate', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 1, 1, str.tostring(totalWins / totalTrades, '#.#%'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 0, 2, 'Trades', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 1, 2, str.tostring(totalTrades, '#') + ' (' + str.tostring(totalWins, '#') + '|' + str.tostring(totalLosses, '#') + ')', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 0, 5, 'WL Ratio', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 1, 5, str.tostring(totalWins / totalLosses, '0.00'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 0, 6, 'Early Signal Flips', text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-    table.cell(tbl, 1, 6, str.tostring(totalEarlySignalFlips, '#'), text_halign=text.align_center, bgcolor=c_transparent, text_color=color.gray, text_size=size.normal)
-
-if showTradeStats
-    var tbl = ml.init_table()
-    if barstate.islast
-        update_table(tbl, tradeStatsHeader, totalTrades, totalWins, totalLosses, winLossRatio, winRate, totalEarlySignalFlips)
 
