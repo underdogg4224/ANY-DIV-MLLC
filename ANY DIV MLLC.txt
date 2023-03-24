@@ -991,32 +991,14 @@ alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Div
 
 // End ANY-DIV V5
 
-// Combined buy and sell signals
-bullish_div_lookback = 14
-bearish_div_lookback = 14
-
-// Check for bullish divergence within the lookback period
-bullish_div = line.new(na, na, na, na, width = 1, color=color.red)
-for i = 0 to bullish_div_lookback - 1
-    if na(x_MLLC[i]) == false
-        line.set_xy1(bullish_div[i], bar_index[i], x_MLLC[i])
-        line.set_xy2(bullish_div[i], bar_index[i + 1], x_MLLC[i + 1])
-
-// Check for bearish divergence within the lookback period
-bearish_div = line.new(na, na, na, na, width = 1, color=color.green)
-for i = 0 to bearish_div_lookback - 1
-    if na(x_MLLC[i]) == false
-        line.set_xy1(bearish_div[i], bar_index[i], x_MLLC[i])
-        line.set_xy2(bearish_div[i], bar_index[i + 1], x_MLLC[i + 1])
-
 // Loop through the bars and generate buy/sell signals
 var bool buy_signal = na
 var bool sell_signal = na
-for i = 1 to bar_index
-    buy_signal := predictions[1][i - 1] > predictions[0][i] and line.get_xy1(bullish_div[i])[1] > line.get_xy2(bullish_div[i])[1]
-    sell_signal := predictions[0][i - 1] > predictions[1][i] and line.get_xy1(bearish_div[i])[1] > line.get_xy2(bearish_div[i])[1]
+
+if barstate.isrealtime
+    buy_signal := predictions[1].prediction > predictions[0].prediction and line.get_xy1(array.get(bullish_div, array.size(bullish_div) - 1))[1] > line.get_xy2(array.get(bullish_div, array.size(bullish_div) - 1))[1]
+    sell_signal := predictions[0].prediction > predictions[1].prediction and line.get_xy1(array.get(bearish_div, array.size(bearish_div) - 1))[1] > line.get_xy2(array.get(bearish_div, array.size(bearish_div) - 1))[1]
 
 // Plot shapes with conditions
 plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal and high[1] < high[2], style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
-
