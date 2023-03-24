@@ -61,11 +61,12 @@ for i = 0 to bearish_div_lookback - 1
 
 // MLLC Plot and Filter
 plot(mllc, color=color.blue, linewidth=2, title="MLLC")
-plot(mllc_prev + mult * sd, color=color.red, linewidth=1, title="Upper Bound")
-plot(mllc_prev - mult * sd, color=color.green, linewidth=1, title="Lower Bound")
+plot(mllc_prev + mult * ta.stdev(close, length), color=color.red, linewidth=1, title="Upper Bound")
+plot(mllc_prev - mult * ta.stdev(close, length), color=color.green, linewidth=1, title="Lower Bound")
 
 bgcolor(bullish_div_found ? color.new(color.green, 90) : na, transp=70)
 bgcolor(bearish_div_found ? color.new(color.red, 90) : na, transp=70)
+
 
 
 // ====================
