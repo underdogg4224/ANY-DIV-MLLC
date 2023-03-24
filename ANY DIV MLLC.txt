@@ -996,9 +996,10 @@ var bool buy_signal = na
 var bool sell_signal = na
 
 if barstate.isrealtime
-    buy_signal := predictions[1].prediction > predictions[0].prediction and line.get_xy1(array.get(bullish_div, array.size(bullish_div) - 1))[1] > line.get_xy2(array.get(bullish_div, array.size(bullish_div) - 1))[1]
-    sell_signal := predictions[0].prediction > predictions[1].prediction and line.get_xy1(array.get(bearish_div, array.size(bearish_div) - 1))[1] > line.get_xy2(array.get(bearish_div, array.size(bearish_div) - 1))[1]
+    buy_signal := line.get_bound(array.get(predictions, 1)).y1 > line.get_bound(array.get(predictions, 0)).y1 and line.get_bound(array.get(bullish_div, array.size(bullish_div) - 1)).y1 > line.get_bound(array.get(bullish_div, array.size(bullish_div) - 1)).y2
+    sell_signal := line.get_bound(array.get(predictions, 0)).y1 > line.get_bound(array.get(predictions, 1)).y1 and line.get_bound(array.get(bearish_div, array.size(bearish_div) - 1)).y1 > line.get_bound(array.get(bearish_div, array.size(bearish_div) - 1)).y2
 
 // Plot shapes with conditions
 plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal and high[1] < high[2], style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
+
