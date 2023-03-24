@@ -992,33 +992,31 @@ alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Div
 // End ANY-DIV V5
 
 // Combined buy and sell signals
-x_MLLC = input(close, title="Input Series")
 bullish_div_lookback = 14
 bearish_div_lookback = 14
 
 // Check for bullish divergence within the lookback period
-bullish_div = bool[](bar_index)
+bullish_div = line.new(na, na, na, na, width = 1, color=color.red)
 for i = 0 to bullish_div_lookback - 1
     if na(x_MLLC[i]) == false
-        bullish_div := array.push(bullish_div, true)
-    else
-        bullish_div := array.push(bullish_div, false)
+        line.set_xy1(bullish_div[i], bar_index[i], x_MLLC[i])
+        line.set_xy2(bullish_div[i], bar_index[i + 1], x_MLLC[i + 1])
 
 // Check for bearish divergence within the lookback period
-bearish_div = bool[](bar_index)
+bearish_div = line.new(na, na, na, na, width = 1, color=color.green)
 for i = 0 to bearish_div_lookback - 1
     if na(x_MLLC[i]) == false
-        bearish_div := array.push(bearish_div, true)
-    else
-        bearish_div := array.push(bearish_div, false)
+        line.set_xy1(bearish_div[i], bar_index[i], x_MLLC[i])
+        line.set_xy2(bearish_div[i], bar_index[i + 1], x_MLLC[i + 1])
 
 // Loop through the bars and generate buy/sell signals
-var float buy_signal = na
-var float sell_signal = na
+var bool buy_signal = na
+var bool sell_signal = na
 for i = 1 to bar_index
-    buy_signal := predictions[1][i - 1] > predictions[0][i] and bullish_div[i]
-    sell_signal := predictions[0][i - 1] > predictions[1][i] and bearish_div[i]
+    buy_signal := predictions[1][i - 1] > predictions[0][i] and line.get_xy1(bullish_div[i])[1] > line.get_xy2(bullish_div[i])[1]
+    sell_signal := predictions[0][i - 1] > predictions[1][i] and line.get_xy1(bearish_div[i])[1] > line.get_xy2(bearish_div[i])[1]
 
 // Plot shapes with conditions
 plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal and high[1] < high[2], style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
+
