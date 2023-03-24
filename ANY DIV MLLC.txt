@@ -1,5 +1,29 @@
 //@version=5
-indicator("MLLC + ANY-DIV V5", shorttitle="MLLC_ANY_DIV", overlay=true)
+indicator("ANY-DIV-MLLC", shorttitle="ANY-DIV-MLLC", overlay=true)
+
+// Input Variables
+rsiLength = input(14, title="RSI Length", minval=1)
+rsiSource = close
+rsiOversold = input(30, title="Oversold Level")
+rsiOverbought = input(70, title="Overbought Level")
+
+// RSI Calculation
+rsi = ta.rsi(rsiSource, rsiLength)
+
+// Divergence Calculation
+bullishDiv = line.new(na, na, na, na, width = 1, color=color.green)
+bearishDiv = line.new(na, na, na, na, width = 1, color=color.red)
+
+bullish_div_array = array.new_line()
+bearish_div_array = array.new_line()
+
+var bar_index_for_bullish_div = int(na)
+var bar_index_for_bearish_div = int(na)
+
+for i = 2 to bar_index
+    // Bullish Divergence
+    if rsi[i] < rsiOversold and rsi[i] < r
+
 
 // Inputs for MLLC
 length = input.int(14, title="Length", minval=1)
