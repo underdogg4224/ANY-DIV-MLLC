@@ -1010,32 +1010,9 @@ for i = 0 to bearish_div_lookback - 1
         break
 
 // Combined buy and sell signals
-buy_signal = t2_MLLC > t1_MLLC and bullish_div
-sell_signal = t2_MLLC < t1_MLLC and bearish_div
+buy_signal = t2 > t1 and bullish_div
+sell_signal = t2 < t1 and bearish_div
 
-// Fix for shadowing variable 'x'
-x_MLLC = x
-x_ANYDIV = x
-
-// Check for bullish divergence within the lookback period
-bullish_div = false
-for i = 0 to bullish_div_lookback - 1
-    if na(x_MLLC[i]) == false
-        bullish_div := true
-        break
-
-// Check for bearish divergence within the lookback period
-bearish_div = false
-for i = 0 to bearish_div_lookback - 1
-    if na(x_ANYDIV[i]) == false
-        bearish_div := true
-        break
-
-// Combined buy and sell signals
-buy_signal = t2_MLLC > t1_MLLC and bullish_div
-sell_signal = t2_MLLC < t1_MLLC and bearish_div
 
 plotshape(buy_signal, style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal, style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
-
-
