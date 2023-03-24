@@ -991,15 +991,10 @@ alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Div
 
 // End ANY-DIV V5
 
-// Loop through the bars and generate buy/sell signals
-var bool buy_signal = na
-var bool sell_signal = na
-
-if barstate.isrealtime
-    buy_signal := line.get_bound(array.get(predictions, 1)).y1 > line.get_bound(array.get(predictions, 0)).y1 and line.get_bound(array.get(bullish_div, array.size(bullish_div) - 1)).y1 > line.get_bound(array.get(bullish_div, array.size(bullish_div) - 1)).y2
-    sell_signal := line.get_bound(array.get(predictions, 0)).y1 > line.get_bound(array.get(predictions, 1)).y1 and line.get_bound(array.get(bearish_div, array.size(bearish_div) - 1)).y1 > line.get_bound(array.get(bearish_div, array.size(bearish_div) - 1)).y2
+// Combined buy and sell signals
+buy_signal = crossover(predictions[1], predictions[0]) and bullish_div
+sell_signal = crossunder(predictions[0], predictions[1]) and bearish_div
 
 // Plot shapes with conditions
 plotshape(buy_signal and low[1] > low[2], style=shape.triangleup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.small)
 plotshape(sell_signal and high[1] < high[2], style=shape.triangledown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.small)
-
