@@ -992,12 +992,7 @@ alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Div
 // End ANY-DIV V5
 
 // Fix for shadowing variable 'x'
-x_MLLC = x
-
-// Define variable and array
-bullish_div_lookback = 14
-bearish_div_lookback = 14
-x_MLLC = input(title="Input Series", type=input.source, defval=close)
+x_MLLC = input(close, title="Input Series")
 
 // Check for bullish divergence within the lookback period
 bullish_div = false
